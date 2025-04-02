@@ -50,6 +50,14 @@ const getBinanceInterval = (timeframe: Timeframe): string => {
   return intervals[timeframe] || "1h";
 };
 
+// Chuyển đổi timestamp từ UTC sang giờ Việt Nam (UTC+7)
+const convertToVietnamTime = (timestamp: number): Date => {
+  const date = new Date(timestamp);
+  // Tạo một đối tượng mới với múi giờ Việt Nam (UTC+7)
+  date.setHours(date.getHours() + 7); 
+  return date;
+};
+
 // Lấy dữ liệu Kline từ Binance
 export const getKlines = async (
   timeframe: Timeframe,
@@ -69,7 +77,16 @@ export const getKlines = async (
 
     const response = await fetch(url.toString());
     const data = await handleApiResponse(response);
-    return data as BinanceKline[];
+
+    // Chuyển đổi thời gian của mỗi Kline từ UTC sang giờ Việt Nam
+    return data.map((kline: BinanceKline) => {
+      const timestamp = kline[0] as number;
+      const vietnamTime = convertToVietnamTime(timestamp);
+      return [
+        vietnamTime.getTime(), 
+        ...kline.slice(1), 
+      ] as BinanceKline;
+    });
   } catch (error) {
     console.error("Error fetching klines:", error);
     throw error;
