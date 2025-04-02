@@ -1,95 +1,87 @@
-// src/app/page.tsx
-"use client"; // This page interacts with hooks and state, needs to be a client component
+"use client";
 
-import React, { useState, useEffect } from "react";
-import { BitcoinChart } from "@/components/BitcoinChart/BitcoinChart";
-import { ChartControls } from "@/components/BitcoinChart/ChartControls";
-import { useBitcoinChartData } from "@/hooks/useBitcoinChartData";
-import { useTheme } from "@/components/Providers/ThemeProvider"; // Use the theme hook
-// import { timeframes } from "@/config/chartConfig";
-import { Timeframe } from "@/types";
+import { useState } from "react";
+import { ChartContainer } from "@/components/BitcoinChart/ChartContainer";
+import { PriceDisplay } from "@/components/PriceDisplay";
+import { Timeframe, Theme } from "@/types";
 
-export default function ChartPage() {
-  const { theme, toggleTheme } = useTheme(); // Get theme state and toggle function
-  const [currentTimeframe, setCurrentTimeframe] = useState<Timeframe>("1h"); // Default timeframe
+const timeframes: Timeframe[] = [
+  "1m",
+  "5m",
+  "15m",
+  "30m",
+  "1h",
+  "4h",
+  "1d",
+  "1w",
+  "1M",
+];
 
-  const {
-    candlestickData,
-    volumeData,
-    loadingInitial,
-    loadingOlder,
-    error,
-    currentPrices,
-    hasMoreOlderData,
-    fetchInitialData,
-    fetchOlderData,
-    fetchCurrentPrices,
-  } = useBitcoinChartData(currentTimeframe); // Initialize hook with default timeframe
+export default function Home() {
+  const [theme, setTheme] = useState<Theme>("dark");
+  const [timeframe, setTimeframe] = useState<Timeframe>("1h");
 
-  // Fetch initial data when component mounts or timeframe changes
-  useEffect(() => {
-    fetchInitialData(currentTimeframe);
-  }, [currentTimeframe, fetchInitialData]); // fetchInitialData is memoized by useCallback in the hook
+  const toggleTheme = () =>
+    setTheme((prevTheme) => (prevTheme === "dark" ? "light" : "dark"));
 
-  const handleTimeframeChange = (
-    event: React.ChangeEvent<HTMLSelectElement>
-  ) => {
-    setCurrentTimeframe(event.target.value as Timeframe);
-    // The useEffect above will trigger fetchInitialData
-  };
+  const renderTimeframeButton = (tf: Timeframe) => {
+    const isActive = timeframe === tf;
+    const themeClasses =
+      theme === "dark"
+        ? isActive
+          ? "bg-blue-600 text-white"
+          : "bg-gray-700 text-gray-300"
+        : isActive
+        ? "bg-blue-500 text-white"
+        : "bg-gray-200 text-gray-700";
 
-  // State for price loading indicator (optional, hook doesn't track this)
-  const [isLoadingPrices, setIsLoadingPrices] = useState(false);
-  const handleFetchPrices = async () => {
-    setIsLoadingPrices(true);
-    await fetchCurrentPrices();
-    setIsLoadingPrices(false);
+    return (
+      <button
+        key={tf}
+        onClick={() => setTimeframe(tf)}
+        className={`px-3 py-1 rounded ${themeClasses}`}
+      >
+        {tf}
+      </button>
+    );
   };
 
   return (
-    // Use theme for background of the whole page container
-    <div
-      className={`p-4 ${
-        theme === "dark"
-          ? "bg-gray-900 text-gray-200"
-          : "bg-gray-100 text-gray-800"
-      } transition-colors duration-300 min-h-screen`}
+    <main
+      className={`min-h-screen ${
+        theme === "dark" ? "bg-gray-900 text-white" : "bg-white text-gray-900"
+      }`}
     >
-      <h1 className="text-xl sm:text-2xl font-bold mb-4 text-center sm:text-left">
-        Biểu đồ Bitcoin (BTC/USDT) - Binance
-      </h1>
+      <div className="container mx-auto px-4 py-8">
+        <div className="flex flex-col md:flex-row justify-between items-center mb-6">
+          <h1 className="text-2xl font-bold mb-4 md:mb-0">Biểu Đồ Bitcoin</h1>
 
-      <ChartControls
-        theme={theme}
-        currentTimeframe={currentTimeframe}
-        currentPrices={currentPrices}
-        isLoadingPrices={isLoadingPrices}
-        onThemeToggle={toggleTheme} // Pass toggle function from context
-        onTimeframeChange={handleTimeframeChange}
-        onFetchPrices={handleFetchPrices}
-      />
+          <div className="flex flex-wrap gap-2 mb-4 md:mb-0">
+            {timeframes.map(renderTimeframeButton)}
+          </div>
 
-      <BitcoinChart
-        theme={theme}
-        timeframe={currentTimeframe}
-        candlestickData={candlestickData}
-        volumeData={volumeData}
-        onLoadOlderData={fetchOlderData} // Pass fetchOlderData from hook
-        hasMoreOlderData={hasMoreOlderData}
-        isLoadingOlder={loadingOlder}
-        isLoadingInitial={loadingInitial}
-        error={error}
-      />
+          <button
+            onClick={toggleTheme}
+            className={`px-4 py-2 rounded ${
+              theme === "dark"
+                ? "bg-gray-700 text-white"
+                : "bg-gray-200 text-gray-800"
+            }`}
+          >
+            {theme === "dark" ? "🌞 Sáng" : "🌙 Tối"}
+          </button>
+        </div>
+        {/* giá hiện tại + 1 phút trc */}
+        <PriceDisplay theme={theme} timeframe={timeframe} />
 
-      {/* Instructions/Info */}
-      <div
-        className={`mt-3 text-xs sm:text-sm ${
-          theme === "dark" ? "text-gray-400" : "text-gray-600"
-        }`}
-      >
-        * Sử dụng chuột/touch để kéo (pan) và lăn chuột/pinch để phóng to
-        (zoom). Kéo sang trái để tải thêm dữ liệu cũ.
+        <div
+          className={`h-[680px] rounded-lg overflow-hidden ${
+            theme === "dark" ? "bg-gray-800" : "bg-white"
+          }`}
+        >
+          <ChartContainer timeframe={timeframe} theme={theme} />
+        </div>
       </div>
-    </div>
+    </main>
   );
 }

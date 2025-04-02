@@ -1,241 +1,194 @@
-// src/components/BitcoinChart/BitcoinChart.tsx
-"use client"; // Mark this component as a Client Component
+"use client"; 
 
-import React, { useEffect, useRef, useCallback } from "react";
+import React, { useEffect, useRef } from "react";
 import {
   createChart,
   IChartApi,
   ISeriesApi,
-  CandlestickData,
-  HistogramData,
-  Time,
-  DeepPartial,
-  LogicalRangeChangeEventHandler,
-  VisibleTimeRangeChangeEventHandler,
-  TimeRange,
+  ColorType,
 } from "lightweight-charts";
-import {
-  getChartOptions,
-  candlestickSeriesOptions,
-  volumeSeriesOptions,
-  VISIBLE_RANGE_LOAD_THRESHOLD,
-} from "@/config/chartConfig";
-import { ChartTheme, Timeframe } from "@/types";
+import { Timeframe, Theme } from "@/types";
+import { useChartData } from "@/hooks/useChartData";
+import debounce from "lodash/debounce";
 
-interface BitcoinChartProps {
-  theme: ChartTheme;
-  timeframe: Timeframe;
-  candlestickData: CandlestickData<Time>[];
-  volumeData: HistogramData<Time>[];
-  onLoadOlderData: () => void; // Callback để trigger tải dữ liệu cũ từ hook
-  hasMoreOlderData: boolean; // Cờ báo còn dữ liệu cũ không
-  isLoadingOlder: boolean; // Cờ báo đang tải dữ liệu cũ
-  isLoadingInitial: boolean; // Cờ báo đang tải dữ liệu ban đầu
-  error: string | null; // Thông báo lỗi
+export interface ChartColors {
+  upColor: string;
+  downColor: string;
+  wickUpColor: string;
+  wickDownColor: string;
+  volumeUpColor: string;
+  volumeDownColor: string;
 }
 
+interface BitcoinChartProps {
+  timeframe: Timeframe;
+  theme: Theme;
+  volumeHeight?: number; // Chiều cao của biểu đồ khối lượng (0-1)
+  colors?: Partial<ChartColors>;
+  onColorsChange?: (colors: ChartColors) => void;
+}
+
+const DEFAULT_COLORS: ChartColors = {
+  upColor: "#26a69a",
+  downColor: "#ef5350",
+  wickUpColor: "#26a69a",
+  wickDownColor: "#ef5350",
+  volumeUpColor: "#26a69a",
+  volumeDownColor: "#ef5350",
+};
+
 export const BitcoinChart: React.FC<BitcoinChartProps> = ({
-  theme,
   timeframe,
-  candlestickData,
-  volumeData,
-  onLoadOlderData,
-  hasMoreOlderData,
-  isLoadingOlder,
-  isLoadingInitial,
-  error,
+  theme,
+  volumeHeight = 0.3, // Mặc định là 30% chiều cao
+  colors: customColors,
+  // onColorsChange,
 }) => {
+  const colors = { ...DEFAULT_COLORS, ...customColors };
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candlestickSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
-  const isInitialLoadComplete = useRef<boolean>(false); // Track initial fitContent
 
-  const memoizedChartOptions = useCallback(
-    () => getChartOptions(theme, timeframe),
-    [theme, timeframe]
-  );
+  const { candlestickData, volumeData, hasMore, isLoading, loadOlderData } =
+    useChartData(timeframe);
 
-  // --- Initialize Chart and Handle Resize ---
   useEffect(() => {
     if (!chartContainerRef.current) return;
-    isInitialLoadComplete.current = false; // Reset fit flag on re-init
 
-    const handleResize = () => {
+    // Xóa chart cũ nếu có
+    if (chartRef.current) {
+      chartRef.current.remove();
+    }
+
+    // Khởi tạo chart mới
+    const chart = createChart(chartContainerRef.current, {
+      layout: {
+        background: {
+          type: ColorType.Solid,
+          color: theme === "dark" ? "#1e222d" : "#ffffff",
+        },
+        textColor: theme === "dark" ? "#d1d4dc" : "#191919",
+      },
+      grid: {
+        vertLines: { color: theme === "dark" ? "#2B2B43" : "#f0f0f0" },
+        horzLines: { color: theme === "dark" ? "#2B2B43" : "#f0f0f0" },
+      },
+      width: chartContainerRef.current.clientWidth,
+      height: chartContainerRef.current.clientHeight,
+      timeScale: {
+        timeVisible: true,
+        secondsVisible: false,
+      },
+    });
+
+    const candlestickSeries = chart.addCandlestickSeries({
+      upColor: colors.upColor,
+      downColor: colors.downColor,
+      borderVisible: false,
+      wickUpColor: colors.wickUpColor,
+      wickDownColor: colors.wickDownColor,
+    });
+
+    const volumeSeries = chart.addHistogramSeries({
+      color: colors.volumeUpColor,
+      priceFormat: {
+        type: "volume",
+      },
+      priceScaleId: "volume",
+    });
+
+    chart.priceScale("volume").applyOptions({
+      scaleMargins: {
+        top: 1 - volumeHeight,
+        bottom: 0,
+      },
+    });
+
+    // Cập nhật dữ liệu ngay sau khi tạo series
+    if (candlestickData.length > 0) {
+      const sortedCandlesticks = [...candlestickData].sort(
+        (a, b) => Number(a.time) - Number(b.time)
+      );
+      const sortedVolumes = [...volumeData].sort(
+        (a, b) => Number(a.time) - Number(b.time)
+      );
+
+      // Cập nhật màu sắc cho volume dựa trên giá đóng cửa và mở cửa
+      const coloredVolumes = sortedVolumes.map((volume, index) => ({
+        ...volume,
+        color:
+          sortedCandlesticks[index]?.close >= sortedCandlesticks[index]?.open
+            ? colors.volumeUpColor
+            : colors.volumeDownColor,
+      }));
+
+      candlestickSeries.setData(sortedCandlesticks);
+      volumeSeries.setData(coloredVolumes);
+      chart.timeScale().fitContent();
+    }
+
+    // Xử lý sự kiện kéo chart
+    const handleTimeRangeChange = debounce((params: { from: number }) => {
+      if (
+        hasMore &&
+        !isLoading &&
+        candlestickData.length > 0 &&
+        params.from <= Number(candlestickData[0].time)
+      ) {
+        loadOlderData();
+      }
+    }, 300);
+
+    chart.timeScale().subscribeVisibleTimeRangeChange((timeRange) => {
+      if (timeRange) {
+        handleTimeRangeChange({ from: Number(timeRange.from) });
+      }
+    });
+
+    // Lưu references
+    chartRef.current = chart;
+    candlestickSeriesRef.current = candlestickSeries;
+    volumeSeriesRef.current = volumeSeries;
+
+    // Cleanup
+    return () => {
+      handleTimeRangeChange.cancel();
+      if (chartRef.current) {
+        chartRef.current.remove();
+        chartRef.current = null;
+        candlestickSeriesRef.current = null;
+        volumeSeriesRef.current = null;
+      }
+    };
+  }, [theme, volumeHeight, timeframe, candlestickData, volumeData, colors]);
+
+  // Xử lý responsive
+  useEffect(() => {
+    const handleResize = debounce(() => {
       if (chartRef.current && chartContainerRef.current) {
         chartRef.current.applyOptions({
           width: chartContainerRef.current.clientWidth,
           height: chartContainerRef.current.clientHeight,
         });
       }
-    };
+    }, 300);
 
-    const chartOptions = memoizedChartOptions(); // Lấy options đã memoized
-    const chart = createChart(chartContainerRef.current, {
-      ...chartOptions,
-      width: chartContainerRef.current.clientWidth,
-      height: chartContainerRef.current.clientHeight,
-    });
-    chartRef.current = chart;
-
-    // Add Series
-    candlestickSeriesRef.current = chart.addCandlestickSeries(
-      candlestickSeriesOptions
-    );
-    volumeSeriesRef.current = chart.addHistogramSeries(volumeSeriesOptions);
-
-    // Apply specific volume price scale options
-    chart.priceScale("volume").applyOptions(chartOptions.volumePriceScale);
-
-    // Resize Observer
-    const resizeObserver = new ResizeObserver(handleResize);
-    resizeObserver.observe(chartContainerRef.current);
-
-    // Visible Time Range Change Listener (for loading older data)
-    const handleVisibleTimeRangeChange: VisibleTimeRangeChangeEventHandler = (
-      timeRange: TimeRange | null
-    ) => {
-      if (
-        !timeRange ||
-        !chartRef.current ||
-        isLoadingOlder ||
-        !hasMoreOlderData ||
-        !isInitialLoadComplete.current
-      ) {
-        return; // Don't trigger if loading, no more data, or initial load not finished fitting
-      }
-      const logicalRange = chartRef.current
-        .timeScale()
-        .getVisibleLogicalRange();
-      if (logicalRange && logicalRange.from < VISIBLE_RANGE_LOAD_THRESHOLD) {
-        console.log(
-          "Chart: Visible range near start, triggering load older data."
-        );
-        onLoadOlderData(); // Gọi callback từ hook
-      }
-    };
-    chart
-      .timeScale()
-      .subscribeVisibleTimeRangeChange(handleVisibleTimeRangeChange);
-
-    // Cleanup
+    window.addEventListener("resize", handleResize);
     return () => {
-      resizeObserver.disconnect();
-      if (chartRef.current) {
-        try {
-          // It's good practice to unsubscribe, though remove() should handle it
-          chartRef.current
-            .timeScale()
-            .unsubscribeVisibleTimeRangeChange(handleVisibleTimeRangeChange);
-        } catch (e) {
-          console.warn("Error unsubscribing from time scale:", e);
-        }
-        chartRef.current.remove();
-        chartRef.current = null;
-      }
-      candlestickSeriesRef.current = null;
-      volumeSeriesRef.current = null;
-      console.log("Chart removed");
+      handleResize.cancel();
+      window.removeEventListener("resize", handleResize);
     };
-    // Dependencies: Chỉ re-init chart nếu theme hoặc timeframe thay đổi (do options thay đổi)
-    // Hoặc nếu callback load older data thay đổi (ít khi xảy ra với useCallback)
-  }, [
-    theme,
-    timeframe,
-    onLoadOlderData,
-    hasMoreOlderData,
-    isLoadingOlder,
-    memoizedChartOptions,
-  ]); // Include memoized options
-
-  // --- Effect for Updating Chart Data ---
-  useEffect(() => {
-    if (candlestickSeriesRef.current && candlestickData) {
-      // console.log("Chart: Applying candlestick data", candlestickData.length);
-      candlestickSeriesRef.current.setData(candlestickData);
-    }
-    if (volumeSeriesRef.current && volumeData) {
-      // console.log("Chart: Applying volume data", volumeData.length);
-      volumeSeriesRef.current.setData(volumeData);
-    }
-
-    // Fit content only once after the initial data for a timeframe is loaded and applied
-    if (
-      chartRef.current &&
-      !isLoadingInitial &&
-      candlestickData.length > 0 &&
-      !isInitialLoadComplete.current
-    ) {
-      console.log("Chart: Initial data loaded, fitting content.");
-      chartRef.current.timeScale().fitContent();
-      isInitialLoadComplete.current = true; // Mark initial fit as done for this timeframe load
-    }
-  }, [candlestickData, volumeData, isLoadingInitial]); // Re-run when data changes or initial loading finishes
-
-  // --- Effect for Applying Theme Options (without re-initializing) ---
-  // This might be redundant if the main useEffect re-initializes on theme change,
-  // but applyOptions is generally cheaper. Keeping it might be slightly faster if only theme changes.
-  useEffect(() => {
-    if (chartRef.current) {
-      const chartOptions = memoizedChartOptions();
-      chartRef.current.applyOptions({
-        layout: chartOptions.layout,
-        grid: chartOptions.grid,
-        rightPriceScale: chartOptions.rightPriceScale,
-        timeScale: chartOptions.timeScale,
-        crosshair: chartOptions.crosshair,
-      });
-      chartRef.current
-        .priceScale("volume")
-        .applyOptions(chartOptions.volumePriceScale);
-      // Note: Series options (like colors) are usually set once or within data.
-      // If you need to dynamically change series colors with theme, do it here.
-    }
-  }, [theme, timeframe, memoizedChartOptions]); // Apply options if theme/timeframe changes
+  }, []);
 
   return (
-    <div className="relative h-[450px] sm:h-[550px] lg:h-[600px] w-full">
-      {/* Chart Container */}
-      <div
-        ref={chartContainerRef}
-        className={`absolute top-0 left-0 w-full h-full rounded shadow overflow-hidden ${
-          theme === "dark" ? "bg-gray-800" : "bg-white"
-        }`}
-      />
-
-      {/* Loading Overlay */}
-      {(isLoadingInitial || isLoadingOlder) && (
-        <div className="absolute inset-0 flex items-center justify-center bg-opacity-50 backdrop-blur-sm z-10 transition-opacity duration-300">
-          <div
-            className={`text-lg font-medium ${
-              theme === "dark" ? "text-white" : "text-black"
-            }`}
-          >
-            {isLoadingInitial
-              ? "Đang tải biểu đồ..."
-              : "Đang tải dữ liệu cũ..."}
-          </div>
-          {/* Optional: Add a spinner here */}
+    <div className="relative w-full h-full">
+      <div ref={chartContainerRef} className="w-full h-full" />
+      {isLoading && (
+        <div className="absolute top-0 left-0 w-full h-full flex items-center justify-center bg-black bg-opacity-50">
+          <div className="text-white">Đang tải dữ liệu...</div>
         </div>
       )}
-
-      {/* Error Overlay */}
-      {error &&
-        !isLoadingInitial && ( // Show error only if not initial loading
-          <div className="absolute inset-0 flex items-center justify-center bg-opacity-70 bg-red-100 z-10 p-4 rounded transition-opacity duration-300">
-            <p className="text-red-700 font-medium text-center">Lỗi: {error}</p>
-          </div>
-        )}
-
-      {/* No More Data Indicator (Optional) */}
-      {!hasMoreOlderData &&
-        !isLoadingOlder &&
-        !isLoadingInitial &&
-        candlestickData.length > 0 && (
-          <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 px-3 py-1 text-xs rounded bg-gray-500 bg-opacity-70 text-white z-5">
-            Đã tải hết dữ liệu cũ
-          </div>
-        )}
     </div>
   );
 };

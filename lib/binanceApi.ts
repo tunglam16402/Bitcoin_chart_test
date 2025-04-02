@@ -1,80 +1,126 @@
-// src/lib/binanceApi.ts
-import { BINANCE_API_BASE, SYMBOL } from "@/config/chartConfig";
-import { BinanceKlineData, Timeframe } from "@/types";
-// import { subMinutes } from 'date-fns';
+import { Timeframe } from "@/types";
 
+export const BINANCE_API_BASE = "https://api.binance.com";
+export const SYMBOL = "BTCUSDT";
+export const INITIAL_LIMIT = 500; // Số nến tải ban đầu
+export const LOAD_MORE_LIMIT = 500; // Số nến tải thêm mỗi lần kéo
+export const VISIBLE_RANGE_LOAD_THRESHOLD = 5; // Ngưỡng nến còn lại để tải thêm
+
+// Định nghĩa kiểu dữ liệu cho Kline từ Binance
+export type BinanceKline = [
+  number,
+  string,
+  string,
+  string,
+  string,
+  string,
+  number,
+  string,
+  number,
+  string,
+  string
+];
+
+// Hàm xử lý phản hồi API
 const handleApiResponse = async (response: Response) => {
-    if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`API Error (${response.status}): ${errorText}`);
-        throw new Error(`API request failed with status ${response.status}: ${errorText}`);
-    }
-    return response.json();
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error(`API Error (${response.status}): ${errorText}`);
+    throw new Error(
+      `API request failed with status ${response.status}: ${errorText}`
+    );
+  }
+  return response.json();
 };
 
-// Lấy dữ liệu Klines (nến)
+// Chuyển đổi timeframe sang định dạng của Binance
+const getBinanceInterval = (timeframe: Timeframe): string => {
+  const intervals: { [key in Timeframe]: string } = {
+    "1m": "1m",
+    "5m": "5m",
+    "15m": "15m",
+    "30m": "30m",
+    "1h": "1h",
+    "4h": "4h",
+    "1d": "1d",
+    "1w": "1w",
+    "1M": "1M",
+  };
+
+  return intervals[timeframe] || "1h";
+};
+
+// Lấy dữ liệu Kline từ Binance
 export const getKlines = async (
-    interval: Timeframe,
-    limit: number,
-    endTime?: number | null // ms timestamp
-): Promise<BinanceKlineData[]> => {
-    const params = new URLSearchParams({
-        symbol: SYMBOL,
-        interval: interval,
-        limit: limit.toString(),
-    });
+  timeframe: Timeframe,
+  limit: number = 500,
+  endTime?: number
+): Promise<BinanceKline[]> => {
+  try {
+    const interval = getBinanceInterval(timeframe);
+    const url = new URL("/api/v3/klines", BINANCE_API_BASE);
+    url.searchParams.append("symbol", SYMBOL);
+    url.searchParams.append("interval", interval);
+    url.searchParams.append("limit", limit.toString());
+
     if (endTime) {
-        params.append('endTime', endTime.toString());
+      url.searchParams.append("endTime", endTime.toString());
     }
 
-    try {
-        const response = await fetch(`${BINANCE_API_BASE}/api/v3/klines?${params.toString()}`);
-        const data = await handleApiResponse(response);
-        if (!Array.isArray(data)) {
-            throw new Error("Invalid data format received from Kline API");
-        }
-        return data;
-    } catch (error) {
-        console.error("Error fetching klines:", error);
-        throw error; // Re-throw để hook có thể bắt lỗi
-    }
+    const response = await fetch(url.toString());
+    const data = await handleApiResponse(response);
+    return data as BinanceKline[];
+  } catch (error) {
+    console.error("Error fetching klines:", error);
+    throw error;
+  }
+};
+
+// Lấy giá hiện tại của Bitcoin
+export const getCurrentPrice = async (): Promise<number> => {
+  try {
+    const response = await fetch(
+      `${BINANCE_API_BASE}/api/v3/ticker/price?symbol=BTCUSDT`
+    );
+    const data = await handleApiResponse(response);
+    return parseFloat(data.price);
+  } catch (error) {
+    console.error("Error fetching current price:", error);
+    throw error;
+  }
 };
 
 // Lấy giá ticker hiện tại
 export const getTickerPrice = async (): Promise<{ price: string }> => {
-    try {
-        const response = await fetch(`${BINANCE_API_BASE}/api/v3/ticker/price?symbol=${SYMBOL}`);
-        const data = await handleApiResponse(response);
-         if (typeof data?.price !== 'string') {
-             throw new Error("Invalid data format received from Ticker API");
-         }
-        return data;
-    } catch (error) {
-        console.error("Error fetching ticker price:", error);
-        throw error;
+  try {
+    const url = `${BINANCE_API_BASE}/api/v3/ticker/price?symbol=${SYMBOL}`;
+    const response = await fetch(url);
+    const data = await handleApiResponse(response);
+    if (typeof data?.price !== "string") {
+      throw new Error("Invalid data format received from Ticker API");
     }
+    return data;
+  } catch (error) {
+    console.error("Error fetching ticker price:", error);
+    throw error;
+  }
 };
 
 // Lấy giá đóng cửa 1 phút trước (sử dụng Klines 1m)
 export const getPreviousMinuteClosePrice = async (): Promise<number | null> => {
-    try {
-         // Lấy nến 1m kết thúc 1 phút trước thời điểm hiện tại
-        const now = Date.now();
-        // endTime nên là thời điểm bắt đầu của phút hiện tại (hoặc cuối phút trước)
-        const endTime = Math.floor(now / 60000) * 60000 - 1; // Lấy thời điểm cuối của phút trước đó (ms)
+  try {
+    const now = Date.now();
+    const endTime = Math.floor(now / 60000) * 60000 - 1; // Thời điểm cuối phút trước (ms)
+    const klines = await getKlines("1m", 1, endTime);
 
-        // Chỉ cần lấy 1 nến là đủ
-        const klines = await getKlines('1m', 1, endTime);
-
-        if (klines && klines.length > 0) {
-            const lastKline = klines[klines.length - 1]; // Nến cuối cùng trong response (chỉ có 1)
-            const closePrice = parseFloat(lastKline[4] as string);
-            return isNaN(closePrice) ? null : closePrice;
-        }
-        return null;
-    } catch (error) {
-        console.error("Error fetching previous minute kline:", error);
-        // Không throw lỗi ở đây để không chặn việc lấy giá hiện tại nếu chỉ lỗi giá quá khứ
-        return null;
+    if (klines.length > 0) {
+      const closePrice = parseFloat(klines[0][4] as string);
+      return isNaN(closePrice) ? null : closePrice;
     }
+
+    return null;
+  } catch (error) {
+    console.error("Error fetching previous minute kline:", error);
+    return null; // Không làm gián đoạn các thao tác khác nếu lỗi
+  }
 };

@@ -1,8 +1,6 @@
-// src/app/layout.tsx
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
-import "./globals.css"; // TailwindCSS base styles
-import { ThemeProvider } from "@/components/Providers/ThemeProvider"; // Import provider
+import "./globals.css"; 
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -18,14 +16,8 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="vi" suppressHydrationWarning>
-      {/* suppressHydrationWarning useful when using localStorage for theme */}
       <body className={`${inter.className} antialiased`}>
-        <ThemeProvider>
-          {" "}
-          {/* Wrap children with ThemeProvider */}
           <main className="min-h-screen">{children}</main>
-          {/* Footer or other global elements */}
-        </ThemeProvider>
       </body>
     </html>
   );
