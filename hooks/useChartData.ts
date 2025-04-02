@@ -142,7 +142,7 @@ export const useChartData = (timeframe: Timeframe) => {
       error: null,
     });
     fetchData(false);
-  }, [fetchData, timeframe]);
+  }, [timeframe]);
 
   // Hàm tải dữ liệu cũ hơn
   const loadOlderData = useCallback(() => {
