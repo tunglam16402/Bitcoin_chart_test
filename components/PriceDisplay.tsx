@@ -41,7 +41,7 @@ export const PriceDisplay: React.FC<PriceDisplayProps> = ({
 
   useEffect(() => {
     fetchPrices();
-  }, [fetchPrices]);
+  }, []);
 
   // Cập nhật giá tự động sau mỗi 10 giây nếu bật tính năng autoUpdate
   useEffect(() => {
